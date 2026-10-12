@@ -9,6 +9,7 @@ from . import ioctls as io
 from .camera import (
     FEATURES,
     MODES,
+    RESTARTING_FEATURES,
     TRACK_FRAMES,
     UNSAFE_SELECTORS,
     CameraNotFound,
@@ -70,6 +71,8 @@ def cmd_info(args, cam):
         print(f"  framing   {cam.get_track_frame()}")
         print(f"  gestures  mask 0x{cam.get_gesture_mask():02x}")
         print(f"  noise-cx  {'on' if cam.get_noise_cancellation() else 'off'}")
+        enabled = [name for name, on in cam.get_features().items() if on]
+        print(f"  flags     0x{cam.feature_flags():04x}  {', '.join(enabled) or 'none'}")
 
     print("\nControls")
     for ctrl in cam.controls().values():
@@ -197,8 +200,24 @@ def cmd_frame(args, cam):
 
 
 def cmd_feature(args, cam):
-    cam.set_feature(args.name, args.state == "on")
-    print(f"{args.name} -> {args.state}  (write-only; the camera reports no readback)")
+    if args.name is None:
+        for name, on in cam.get_features().items():
+            note = "  (restarts the camera)" if name in RESTARTING_FEATURES else ""
+            print(f"{name:16} {'on' if on else 'off'}{note}")
+        return 0
+    if args.name not in cam.supported_features():
+        return _fail(f"{args.name} is not available on this model")
+    if args.state is None:
+        print("on" if cam.get_features()[args.name] else "off")
+        return 0
+    if args.name in RESTARTING_FEATURES and not args.yes:
+        return _fail(f"changing {args.name} restarts the camera and interrupts any "
+                     "application using it; pass --yes to confirm")
+    if cam.set_feature(args.name, args.state == "on"):
+        print(f"{args.name} -> {args.state}; the camera is restarting and will be back "
+              "in a few seconds")
+    else:
+        print(f"{args.name} -> {args.state}")
     return 0
 
 
@@ -351,9 +370,11 @@ def build_parser():
     p.add_argument("name", nargs="?", choices=sorted(TRACK_FRAMES))
     p.set_defaults(func=cmd_frame)
 
-    p = sub.add_parser("feature", help="toggle a firmware feature (no readback)")
-    p.add_argument("name", choices=sorted(FEATURES))
-    p.add_argument("state", choices=["on", "off"])
+    p = sub.add_parser("feature", help="list, read or toggle feature flags")
+    p.add_argument("name", nargs="?", choices=sorted(FEATURES))
+    p.add_argument("state", nargs="?", choices=["on", "off"])
+    p.add_argument("--yes", action="store_true",
+                   help="confirm a change that restarts the camera")
     p.set_defaults(func=cmd_feature)
 
     p = sub.add_parser("gestures", help="hand gesture control on/off")

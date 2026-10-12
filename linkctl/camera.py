@@ -5,6 +5,7 @@ The proprietary features (AI tracking, DeskView, gimbal reset, ...) live in the
 camera's UVC extension units and are reached with UVCIOC_CTRL_QUERY.
 """
 
+import errno
 import glob
 import json
 import os
@@ -45,7 +46,7 @@ SEL_TRACK_TARGET = 21  # normalised float x/y of the tracking target
 SEL_FRAME_BIAS = 24    # 2x int16 framing offset
 SEL_PTZ_SPEED = 25     # gimbal movement speed
 SEL_PTZ_ABSOLUTE = 26  # 2x int32 (tilt, pan) in arcseconds -- mirrors V4L2
-SEL_FEATURE = 27       # 2 bytes: {parameter id, value} multiplexer
+SEL_FEATURE_FLAGS = 27  # 2 bytes: little-endian bitmask of feature flags (persisted)
 SEL_EXPOSURE = 29      # shutter time
 SEL_AE_MODE = 30       # auto-exposure mode
 
@@ -75,15 +76,36 @@ MODES = {
 
 TRACK_FRAMES = {"head": 1, "upper": 2, "full": 3}
 
-# Parameter IDs for the SEL_FEATURE multiplexer.
+# Bit numbers in SEL_FEATURE_FLAGS. A write replaces every flag at once, so they are
+# always changed read-modify-write.
 FEATURES = {
-    "flip": 0x0B,
-    "hdr": 0x0E,
-    "ai-zoom": 0x1C,
-    "tracking-engine": 0x1D,
-    "portrait": 0x2A,
-    "touch-gesture": 0x2E,
-    "drag": 0x2F,
+    "ai-zoom": 0,
+    "hdr": 2,
+    "flip": 3,             # horizontal mirror
+    "gesture-control": 4,  # master switch for hand gestures
+    "portrait": 5,         # 9:16 formats; the camera restarts to apply it
+    "startup-params": 6,   # keep the current parameters as power-up defaults
+    "tap-track": 7,
+    "auto-track": 8,
+    "smart-adjust": 9,
+    "lock-vertical": 10,   # hold the gimbal in vertical orientation
+    "privacy": 11,         # point the gimbal down
+    "vflip": 12,
+    "low-res": 13,         # the camera restarts to apply it
+}
+
+# Changing these makes the camera save the flag and restart: the write fails with
+# EPROTO and the device re-enumerates a few seconds later.
+RESTARTING_FEATURES = {"portrait", "low-res"}
+
+# Features only some models have, by USB product ID. Unlisted features are common.
+# The Link 1 (4c01) ignores writes to the privacy and vflip bits.
+LINK2_FAMILY = {"4c03", "4c04", "4c05", "4c06"}
+FEATURE_MODELS = {
+    "lock-vertical": {"4c01"},
+    "privacy": LINK2_FAMILY,
+    "vflip": LINK2_FAMILY,
+    "low-res": LINK2_FAMILY,
 }
 
 ARCSEC_PER_DEGREE = 3600
@@ -427,15 +449,47 @@ class LinkCamera:
                 return name
         return f"unknown({value})"
 
-    def set_feature(self, name, value):
-        """Toggle a firmware feature through the parameter multiplexer.
+    def supported_features(self):
+        """Names from FEATURES that this model has."""
+        pid = self.info.get("pid")
+        return [name for name in FEATURES
+                if name not in FEATURE_MODELS or pid in FEATURE_MODELS[name]]
 
-        The camera gives no readback for these, so state is not queryable.
+    def feature_flags(self):
+        return struct.unpack_from("<H", self.xu_read(SEL_FEATURE_FLAGS), 0)[0]
+
+    def get_features(self):
+        """{name: bool} for every feature this model supports."""
+        flags = self.feature_flags()
+        return {name: bool(flags >> FEATURES[name] & 1) for name in self.supported_features()}
+
+    def set_feature(self, name, value):
+        """Turn one feature flag on or off, leaving the others as they are.
+
+        Returns True if the camera is restarting to apply the change. The device node
+        is then gone; reopen the camera once it has re-enumerated.
         """
-        if name not in FEATURES:
-            raise ValueError(f"unknown feature {name!r}; choose from {', '.join(FEATURES)}")
-        self.xu_write(SEL_FEATURE, bytes([FEATURES[name], 1 if value else 0]))
-        return bool(value)
+        if name not in self.supported_features():
+            raise ValueError(f"unknown feature {name!r}; choose from "
+                             f"{', '.join(self.supported_features())}")
+        flags = self.feature_flags()
+        bit = 1 << FEATURES[name]
+        new = flags | bit if value else flags & ~bit
+        if new == flags:
+            return False
+        payload = bytearray(self.xu_read(SEL_FEATURE_FLAGS))
+        struct.pack_into("<H", payload, 0, new)
+        try:
+            self.xu_write(SEL_FEATURE_FLAGS, payload)
+        except OSError as exc:
+            if exc.errno == errno.EPROTO and name in RESTARTING_FEATURES:
+                return True
+            raise
+        if name in RESTARTING_FEATURES:
+            return True
+        if self.feature_flags() != new:
+            raise OSError(errno.ENOTSUP, f"the camera did not apply {name}")
+        return False
 
     def set_noise_cancellation(self, enabled):
         self.xu_write(SEL_NOISE_CANCEL, bytes([1 if enabled else 0]))

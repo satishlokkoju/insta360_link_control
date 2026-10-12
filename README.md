@@ -101,7 +101,7 @@ linkctl track [on|off]           AI subject tracking
 linkctl frame [head|upper|full]  how tightly tracking frames you
 linkctl gestures [on|off]        hand gesture control
 linkctl noise [on|off]           microphone noise cancellation
-linkctl feature NAME on|off      firmware feature multiplexer
+linkctl feature [NAME [on|off]]  list, read or toggle feature flags
 
 linkctl get CONTROL              e.g. brightness, contrast, focus
 linkctl set CONTROL VALUE
@@ -159,10 +159,9 @@ frames, not by assuming the write succeeded.
 | Framing modes (normal / track / whiteboard / overhead / deskview) | Works — visibly changes framing and gimbal position. |
 | Tracking framing (head / upper / full) | Works, and reads back correctly. |
 | Gesture enable, noise cancellation | Works, and reads back correctly. See the gesture caveat below. |
-| `feature flip` | Works — mirrors the image horizontally. |
+| `feature` flags | Read back from the camera. `flip` (mirror) confirmed visually; `portrait` restarts the camera into 9:16 formats. See below. |
 | Mode **readback** | Unreliable. See below. |
 | Firmware gimbal re-home (selector 14) | **No effect on the Link 2.** Use `linkctl center`. |
-| Other `feature` toggles (hdr, portrait, ai-zoom, …) | Write-only; the camera reports no state, and only `flip` was confirmed visually. |
 
 ### Two behaviours worth knowing
 
@@ -189,6 +188,17 @@ mode register. Once any mode has been set the firmware writes `0xFF` into byte 0
 says "a mode is active" without saying which. `linkctl` therefore reports the mode this
 process last set. For the same reason mode changes are written read-modify-write, so a
 write patches two bytes instead of blanking the other 59.
+
+**Feature flags are one bitmask, stored in the camera.** `linkctl feature` lists them with
+their current state. Each change reads the flags, flips one bit and writes them back, and
+the camera keeps them across power cycles. `portrait` and `low-res` make the camera restart
+to apply the change, which interrupts any application using it, so they need `--yes`:
+
+```bash
+linkctl feature                    # every flag and its state
+linkctl feature flip off
+linkctl feature portrait on --yes  # restarts; then pick a 9:16 format in your app
+```
 
 ---
 

@@ -13,7 +13,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from . import ioctls as io
-from .camera import FEATURES, MODES, TRACK_FRAMES, LinkCamera
+from .camera import MODES, RESTARTING_FEATURES, TRACK_FRAMES, LinkCamera
 
 APP_NAME = "Link Control"
 
@@ -41,8 +41,10 @@ IMAGE_SLIDERS = [
 class PreviewStream:
     """Runs ffmpeg and hands the newest decoded frame to the UI thread."""
 
-    def __init__(self, node, width=PREVIEW_WIDTH, height=PREVIEW_HEIGHT, fps=15):
+    def __init__(self, node, width=PREVIEW_WIDTH, height=PREVIEW_HEIGHT, fps=15,
+                 capture="1280x720"):
         self.node = node
+        self.capture = capture
         self.width, self.height, self.fps = width, height, fps
         self.frames = queue.Queue(maxsize=1)
         self.error = None
@@ -59,7 +61,7 @@ class PreviewStream:
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-f", "v4l2", "-input_format", "mjpeg",
-            "-video_size", "1280x720", "-framerate", "30",
+            "-video_size", self.capture, "-framerate", "30",
             "-i", self.node,
             "-vf", f"scale={self.width}:{self.height},fps={self.fps}",
             "-f", "image2pipe", "-vcodec", "ppm", "-",
@@ -343,23 +345,23 @@ class ControlPanel(ttk.Frame):
         advanced.columnconfigure(0, weight=1)
         ttk.Label(
             advanced,
-            text="These write to the firmware's feature multiplexer.\n"
-                 "The camera reports no state back, so these are fire-and-forget.",
+            text="Feature flags stored in the camera. Those marked * restart\n"
+                 "the camera, which interrupts any application using it.",
             justify="left",
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        for index, name in enumerate(sorted(FEATURES), start=1):
-            ttk.Label(advanced, text=name).grid(row=index, column=0, sticky="w", pady=2)
-            buttons = ttk.Frame(advanced)
-            buttons.grid(row=index, column=1, sticky="e")
-            ttk.Button(
-                buttons, text="On", width=5, command=lambda n=name: self.on_feature(n, True),
-            ).pack(side="left", padx=2)
-            ttk.Button(
-                buttons, text="Off", width=5, command=lambda n=name: self.on_feature(n, False),
-            ).pack(side="left", padx=2)
+        self.feature_vars = {}
+        features = self.cam.supported_features() if self.cam.has_extension_unit else []
+        for index, name in enumerate(features, start=1):
+            var = tk.BooleanVar()
+            label = f"{name} *" if name in RESTARTING_FEATURES else name
+            ttk.Checkbutton(
+                advanced, text=label, variable=var,
+                command=lambda n=name: self.on_feature(n),
+            ).grid(row=index, column=0, columnspan=2, sticky="w", pady=1)
+            self.feature_vars[name] = var
 
         info = ttk.LabelFrame(advanced, text="Device", padding=8)
-        info.grid(row=len(FEATURES) + 1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        info.grid(row=len(features) + 1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         details = [
             ("Model", self.cam.info.get("model", "")),
             ("Node", self.cam.node),
@@ -418,6 +420,7 @@ class ControlPanel(ttk.Frame):
                     self.frame_var.set(frame)
                 self.gesture_var.set(bool(self.cam.get_gesture_mask()))
                 self.noise_var.set(self.cam.get_noise_cancellation())
+                self._refresh_features()
             self._refresh_presets()
         except OSError as exc:
             self.say(f"Could not read camera state: {exc}")
@@ -562,10 +565,29 @@ class ControlPanel(ttk.Frame):
         except Exception as exc:
             self.say(f"Noise cancellation failed: {exc}")
 
-    def on_feature(self, name, state):
+    def _refresh_features(self):
+        for name, on in self.cam.get_features().items():
+            self.feature_vars[name].set(on)
+
+    def on_feature(self, name):
+        state = self.feature_vars[name].get()
+        if name in RESTARTING_FEATURES:
+            from tkinter import messagebox
+
+            if not messagebox.askyesno(
+                APP_NAME,
+                f"Turning {name} {'on' if state else 'off'} restarts the camera. "
+                "Any application using it will lose the video.\n\nContinue?",
+            ):
+                self.feature_vars[name].set(not state)
+                return
         try:
-            self.cam.set_feature(name, state)
-            self.say(f"{name} -> {'on' if state else 'off'} (no readback available)")
+            if self.cam.set_feature(name, state):
+                self.say(f"{name} -> {'on' if state else 'off'}; the camera is restarting. "
+                         "Reopen Link Control once it is back.")
+                return
+            self._refresh_features()
+            self.say(f"{name} -> {'on' if state else 'off'}")
         except Exception as exc:
             self.say(f"{name} failed: {exc}")
 
@@ -602,7 +624,12 @@ class ControlPanel(ttk.Frame):
 
     def toggle_preview(self):
         if self.preview_var.get():
-            self.preview = PreviewStream(self.cam.node)
+            if self.feature_vars.get("portrait") and self.feature_vars["portrait"].get():
+                # Portrait mode only offers 9:16 formats; fit one to the preview height.
+                width = PREVIEW_HEIGHT * 736 // 1280 // 2 * 2
+                self.preview = PreviewStream(self.cam.node, width=width, capture="736x1280")
+            else:
+                self.preview = PreviewStream(self.cam.node)
             if not self.preview.start():
                 self.say(f"Preview failed: {self.preview.error}")
                 self.preview_var.set(False)
@@ -635,7 +662,9 @@ class ControlPanel(ttk.Frame):
             try:
                 self.photo = tk.PhotoImage(data=frame)
                 self.canvas.delete("frame")
-                self.canvas.create_image(0, 0, anchor="nw", image=self.photo, tags="frame")
+                self.canvas.create_image(
+                    PREVIEW_WIDTH // 2, PREVIEW_HEIGHT // 2, image=self.photo, tags="frame",
+                )
             except tk.TclError as exc:
                 self.say(f"Cannot display frame: {exc}")
                 self.preview_var.set(False)
