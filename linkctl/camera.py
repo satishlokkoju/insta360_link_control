@@ -1,7 +1,7 @@
 """High-level control of an Insta360 Link / Link 2 webcam.
 
 Standard pan/tilt/zoom/focus/image settings go through ordinary V4L2 controls.
-The proprietary features (AI tracking, DeskView, gimbal reset, ...) live in the
+The proprietary features (AI tracking, DeskView, gestures, ...) live in the
 camera's UVC extension units and are reached with UVCIOC_CTRL_QUERY.
 """
 
@@ -38,7 +38,7 @@ SEL_GESTURE_BIND = 6   # 5 bytes, one action per gesture slot (firmware-owned; w
                        # are accepted but do not stick)
 SEL_NOISE_CANCEL = 7   # 1 byte, microphone noise cancellation
 SEL_SERIAL = 12        # 32 bytes, unit serial (writable -- never touch)
-SEL_GIMBAL_RESET = 14  # 1 byte, write 1 to recentre (no observable effect on the Link 2)
+SEL_SETTINGS_RESET = 14  # 1 byte: factory settings reset, applied at the next power-up
 SEL_USB_MODE = 17      # 1 byte, 0=uvc 1=photo 2=mass-storage -- drops the webcam
 SEL_TRACK_FRAME = 19   # 1 byte, 1=head 2=upper body 3=full body
 SEL_TRACK_TARGET = 21  # normalised float x/y of the tracking target
@@ -55,6 +55,7 @@ SEL_AE_MODE = 30       # auto-exposure mode
 UNSAFE_SELECTORS = {
     SEL_USB_MODE: "switches the USB personality; the camera stops being a webcam until replug",
     SEL_SERIAL: "overwrites the unit serial number",
+    SEL_SETTINGS_RESET: "resets every setting to factory defaults at the next power-up",
     3: "bulk configuration blob",
     4: "bulk configuration blob",
     8: "bulk transfer buffer",
@@ -340,20 +341,6 @@ class LinkCamera:
         self.set_pan(0)
         self.set_tilt(0)
         self.set_zoom(1.0)
-
-    def gimbal_reset(self, settle=2.5):
-        """Ask the firmware to re-home the gimbal.
-
-        Returns (moved, before, after) as physical (tilt, pan) arcsecond pairs.
-        On the Link 2 this firmware trigger appears to do nothing -- measured with the
-        camera both parked and streaming -- so callers should treat a False result as
-        normal and use center() to recentre.
-        """
-        before = self.ptz_raw()
-        self.xu_write(SEL_GIMBAL_RESET, b"\x01")
-        time.sleep(settle)
-        after = self.ptz_raw()
-        return before != after, before, after
 
     # The gimbal stows at roughly -85 deg tilt when no application is streaming.
     PARKED_TILT_DEGREES = -80

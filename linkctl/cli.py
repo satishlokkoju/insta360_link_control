@@ -162,13 +162,11 @@ def cmd_center(args, cam):
 
 
 def cmd_reset(args, cam):
-    moved, before, after = cam.gimbal_reset()
-    print(f"physical position {before[1]/3600:+.1f}/{before[0]/3600:+.1f} -> "
-          f"{after[1]/3600:+.1f}/{after[0]/3600:+.1f} (pan/tilt)")
-    if not moved:
-        print("the firmware re-home trigger did nothing on this model; "
-              "use `linkctl center` to recentre")
-    return 0
+    # This used to write extension-unit selector 14, which the camera treats as a
+    # factory settings reset (applied at the next power-up), not a gimbal re-home.
+    print("linkctl: `reset` is now an alias for `center`; it no longer touches the "
+          "camera's factory settings reset", file=sys.stderr)
+    return cmd_center(args, cam)
 
 
 def cmd_mode(args, cam):
@@ -337,7 +335,7 @@ def build_parser():
     p.set_defaults(func=cmd_move)
 
     sub.add_parser("center", help="pan 0, tilt 0, zoom 1x").set_defaults(func=cmd_center)
-    sub.add_parser("reset", help="ask the firmware to re-home the gimbal").set_defaults(func=cmd_reset)
+    sub.add_parser("reset", help="deprecated alias for center").set_defaults(func=cmd_reset)
 
     p = sub.add_parser("mode", help="get or set the framing mode")
     p.add_argument("name", nargs="?", choices=sorted(MODES))

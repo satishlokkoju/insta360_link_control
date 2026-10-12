@@ -49,7 +49,8 @@ above:
   be read-modify-write. After any mode is set the firmware puts `0xFF` in byte 0, so the
   readback reports "a mode is active" without saying which.
 - **Selector 14 (gimbal re-home) has no effect on the Link 2**, measured both parked and
-  while streaming.
+  while streaming. Testing on a Link showed it is a factory settings reset (on the Link 1 it
+  takes effect at the next power-up), which is why nothing moved.
 - **Selector 6 (gesture bindings) is firmware-owned.** Disabling gestures clears it, and
   writes to restore it are accepted but ignored.
 

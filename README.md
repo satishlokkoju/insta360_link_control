@@ -161,7 +161,7 @@ frames, not by assuming the write succeeded.
 | Gesture enable, noise cancellation | Works, and reads back correctly. See the gesture caveat below. |
 | `feature flip` | Works — mirrors the image horizontally. |
 | Mode **readback** | Unreliable. See below. |
-| Firmware gimbal re-home (selector 14) | **No effect on the Link 2.** Use `linkctl center`. |
+| Selector 14 | **Factory settings reset**, not a gimbal re-home: brightness, gestures, mirror and the other settings return to their defaults at the next power-up. Blocked; use `linkctl center` to recentre. |
 | Other `feature` toggles (hdr, portrait, ai-zoom, …) | Write-only; the camera reports no state, and only `flip` was confirmed visually. |
 
 ### Two behaviours worth knowing
@@ -197,7 +197,9 @@ write patches two bytes instead of blanking the other 59.
 `linkctl` refuses to write to extension-unit selectors that can take the camera away from
 you or overwrite its identity — most importantly selector 17, which switches the USB
 personality and stops the device being a webcam until you unplug it, and selector 12,
-which holds the serial number. Bulk configuration blobs are blocked too.
+which holds the serial number. Selector 14 is blocked as well: it resets every setting to
+its factory default the next time the camera powers up. Bulk configuration blobs are
+blocked too.
 
 Writes to extension units 10 and 11 are blocked outright, because their selectors are not
 mapped and several are write-only with unknown effects.
