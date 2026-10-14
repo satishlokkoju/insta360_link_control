@@ -295,7 +295,14 @@ def cmd_raw(args, cam):
 
 
 def cmd_gui(args, cam):
-    from .gui import run
+    try:
+        from .gui import run
+    except ModuleNotFoundError as exc:
+        if exc.name != "tkinter":
+            raise
+        return _fail("the GUI needs Tk, which is not installed. Install it with "
+                     "`sudo apt install python3-tk` (Debian/Ubuntu) or "
+                     "`sudo dnf install python3-tkinter` (Fedora)")
     run(cam)
     return 0
 

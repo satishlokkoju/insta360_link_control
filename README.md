@@ -3,7 +3,8 @@
 Insta360 ships no Linux version of its Link Controller app. This is a CLI and a GUI
 that drive the camera directly through V4L2 and the camera's own UVC extension units.
 
-Pure Python standard library. No pip install, no compile step, no root.
+Pure Python standard library. No pip install, no compile step, no root. The GUI needs
+Tk, which some distributions ship separately (see [Install](#install)).
 
 ```
 ./linkctl-run gui        # graphical control panel
@@ -56,10 +57,22 @@ cd insta360_link_control
 ```
 
 Or install it as a Python package, which also provides the `link-control-gui`
-desktop command:
+desktop command. Debian, Ubuntu and other distributions that mark the system Python as
+externally managed (PEP 668) reject `pip install --user`, so use `pipx`:
 
 ```bash
-pip install --user .
+sudo apt install pipx    # Fedora: sudo dnf install pipx
+pipx ensurepath          # then open a new terminal
+pipx install .
+```
+
+On other systems, `pip install --user .` works too.
+
+The GUI uses Tk, which some distributions package separately from Python:
+
+```bash
+sudo apt install python3-tk        # Debian, Ubuntu
+sudo dnf install python3-tkinter   # Fedora
 ```
 
 ### Building the Flatpak yourself
